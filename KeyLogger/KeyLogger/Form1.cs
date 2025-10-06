@@ -27,6 +27,9 @@ namespace KeyLogger
         private long lineCount = 0;
         private AppSettings settings;
         private string sessionId = Guid.NewGuid().ToString("N");
+        private DateTime currentParagraphMinute = DateTime.MinValue;
+        private DateTime currentFileParagraphMinute = DateTime.MinValue;
+        private bool writePlainMarkdown = true; // Düz metin (.md) yaz
 
         public Form1()
         {
@@ -50,7 +53,7 @@ namespace KeyLogger
             Controls.Add(txtDisplay);
 
             var logDir = Directory.Exists(settings.LogDirectory) ? settings.LogDirectory : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            logPath = Path.Combine(logDir, "safe_type_log.dat");
+            logPath = Path.Combine(logDir, "safe_type_log.md");
 
             btnStartStop.Click += BtnStartStop_Click;
             btnOpenLog.Click += BtnOpenLog_Click;
@@ -224,7 +227,9 @@ namespace KeyLogger
             if (ShouldSkipCurrentControl()) return;
 
             string entry = $"{DateTime.Now:HH:mm:ss} KeyDown {e.KeyCode} Mod:{(e.Modifiers == Keys.None ? "-" : e.Modifiers.ToString())}";
-            AppendLogEntry(entry);
+            // Ekranda göstermiyoruz. Dosyaya yaz: yalnızca şifreli modda.
+            if (!writePlainMarkdown)
+                AppendLogEntry(entry, displayNewLine: false, displayText: false);
         }
 
         private void Form1_KeyPress(object sender, KeyPressEventArgs e)
@@ -236,8 +241,84 @@ namespace KeyLogger
             if (char.IsControl(e.KeyChar))
                 printable = $"\\u{(int)e.KeyChar:x4}";
 
-            string entry = $"{DateTime.Now:HH:mm:ss} KeyPress '{printable}'";
-            AppendLogEntry(entry);
+            // Görünümü dakika başına paragraf olarak güncelle
+            AppendDisplayFromKeyPress(e);
+
+            if (writePlainMarkdown)
+            {
+                AppendMarkdownFromKeyPressToFile(e);
+            }
+            else
+            {
+                // Dosyaya ayrıntılı olay olarak yazmaya devam et (ekranda göstermeden)
+                string entry = $"{DateTime.Now:HH:mm:ss} KeyPress '{printable}'";
+                AppendLogEntry(entry, displayNewLine: false, displayText: false);
+            }
+        }
+
+        private void AppendDisplayFromKeyPress(KeyPressEventArgs e)
+        {
+            var now = DateTime.Now;
+            var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
+
+            if (currentParagraphMinute != minute)
+            {
+                // Önceki paragrafı satırla kapat ve yeni dakika başlığı yaz
+                if (txtDisplay.TextLength > 0)
+                {
+                    if (!txtDisplay.Text.EndsWith(Environment.NewLine))
+                        txtDisplay.AppendText(Environment.NewLine);
+                }
+                txtDisplay.AppendText($"[{now:HH:mm}] ");
+                currentParagraphMinute = minute;
+            }
+
+            char c = e.KeyChar;
+            if (c == '\r') return; // CR'yi yoksay (LF bekle)
+            if (c == '\n') { txtDisplay.AppendText(Environment.NewLine); return; }
+
+            if (char.IsControl(c))
+            {
+                // Diğer kontrol karakterlerini görselde yoksay
+                return;
+            }
+
+            txtDisplay.AppendText(c.ToString());
+        }
+
+        private void AppendMarkdownFromKeyPressToFile(KeyPressEventArgs e)
+        {
+            try
+            {
+                EnsureLogRotation();
+                var now = DateTime.Now;
+                var minute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
+
+                if (currentFileParagraphMinute != minute)
+                {
+                    var prefix = (File.Exists(logPath) && new FileInfo(logPath).Length > 0) ? Environment.NewLine : string.Empty;
+                    File.AppendAllText(logPath, prefix + $"[{now:HH:mm}] ");
+                    currentFileParagraphMinute = minute;
+                }
+
+                char c = e.KeyChar;
+                if (c == '\r') return;
+                if (c == '\n')
+                {
+                    File.AppendAllText(logPath, Environment.NewLine);
+                    lineCount++;
+                    UpdateStatusBar();
+                    return;
+                }
+                if (char.IsControl(c)) return;
+
+                File.AppendAllText(logPath, c.ToString());
+                UpdateStatusBar();
+            }
+            catch (Exception ex)
+            {
+                AppendVisibleLine("[Hata] MD yazılamadı: " + ex.Message);
+            }
         }
 
         private bool ShouldSkipCurrentControl()
@@ -261,9 +342,20 @@ namespace KeyLogger
             txtDisplay.AppendText(text + Environment.NewLine);
         }
 
-        private void AppendLogEntry(string entry)
+        private void AppendLogEntry(string entry, bool displayNewLine = true, bool displayText = true)
         {
-            AppendVisibleLine(entry);
+            // Görünüm: istenirse yaz
+            if (displayText)
+            {
+                if (displayNewLine)
+                {
+                    AppendVisibleLine(entry);
+                }
+                else
+                {
+                    txtDisplay.AppendText(entry);
+                }
+            }
 
             try
             {
@@ -272,6 +364,7 @@ namespace KeyLogger
                 var encrypted = ProtectedData.Protect(plain, optionalEntropy, DataProtectionScope.CurrentUser);
                 var b64 = Convert.ToBase64String(encrypted);
 
+                // Dosya formatını satır-bazlı tut: her giriş yeni satır
                 File.AppendAllText(logPath, b64 + Environment.NewLine);
                 lineCount++;
             }
@@ -335,7 +428,7 @@ namespace KeyLogger
                     settings = f.ResultSettings;
                     settings.Save();
                     var logDir = Directory.Exists(settings.LogDirectory) ? settings.LogDirectory : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                    logPath = Path.Combine(logDir, "safe_type_log.dat");
+                    logPath = Path.Combine(logDir, "safe_type_log.md");
                     UpdateStatusBar();
                     ApplyThemeAndFont();
                 }
@@ -417,7 +510,7 @@ namespace KeyLogger
                 {
                     ofd.Title = "Gönderilecek log dosyasını seçin";
                     ofd.InitialDirectory = Path.GetDirectoryName(logPath);
-                    ofd.Filter = "Log (*.dat)|*.dat|Tümü (*.*)|*.*";
+                    ofd.Filter = "Log (*.md;*.txt;*.dat)|*.md;*.txt;*.dat|Tümü (*.*)|*.*";
                     ofd.FileName = Path.GetFileName(logPath);
                     if (ofd.ShowDialog(this) == DialogResult.OK)
                     {
