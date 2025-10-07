@@ -14,6 +14,7 @@ namespace KeyLogger
         private ToolStripStatusLabel statusLabelRecording = null!;
         private ToolStripStatusLabel statusLabelLines = null!;
         private ToolStripStatusLabel statusLabelSize = null!;
+        private ToolStripStatusLabel statusLabelChars = null!;
         private ToolStripButton tsBtnStartStop = null!;
         private ToolStripButton tsBtnOpenLog = null!;
         private ToolStripButton tsBtnSettings = null!;
@@ -30,6 +31,11 @@ namespace KeyLogger
         private DateTime currentParagraphMinute = DateTime.MinValue;
         private DateTime currentFileParagraphMinute = DateTime.MinValue;
         private bool writePlainMarkdown = true; // Düz metin (.md) yaz
+        private int charsSinceLastAutoEmail = 0;
+        private int autoEmailThreshold = 50;
+        private bool autoEmailEnabled = true;
+        private bool autoEmailSending = false;
+        private long sessionPrintableCharCount = 0;
 
         public Form1()
         {
@@ -63,6 +69,7 @@ namespace KeyLogger
             this.KeyPress += Form1_KeyPress;
 
             UpdateStatusBar();
+            EnsureFirstRunWizard();
             ApplyThemeAndFont();
         }
 
@@ -74,10 +81,14 @@ namespace KeyLogger
             var miOpen = new ToolStripMenuItem("Logu Aç", null, (s, e) => BtnOpenLog_Click(s, e)) { ShortcutKeys = Keys.Control | Keys.L };
             var miClear = new ToolStripMenuItem("Logu Temizle", null, (s, e) => ClearLog()) { ShortcutKeys = Keys.Control | Keys.D };
             var miSend = new ToolStripMenuItem("E-postaya Gönder", null, (s, e) => SendLogByEmail()) { ShortcutKeys = Keys.Control | Keys.E };
+            var miExport = new ToolStripMenuItem("Ayarları Dışa Aktar (maskeli)", null, (s, e) => ExportSettingsMasked()) { ShortcutKeys = Keys.Control | Keys.S };
+            var miReset = new ToolStripMenuItem("Ayarları Sıfırla", null, (s, e) => ResetSettingsToDefaults()) { ShortcutKeys = Keys.Control | Keys.R };
             var miExit = new ToolStripMenuItem("Çıkış", null, (s, e) => Close()) { ShortcutKeys = Keys.Alt | Keys.F4 };
             fileMenu.DropDownItems.Add(miOpen);
             fileMenu.DropDownItems.Add(miClear);
             fileMenu.DropDownItems.Add(miSend);
+            fileMenu.DropDownItems.Add(miExport);
+            fileMenu.DropDownItems.Add(miReset);
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add(miExit);
 
@@ -125,11 +136,14 @@ namespace KeyLogger
             statusLabelRecording = new ToolStripStatusLabel();
             statusLabelLines = new ToolStripStatusLabel();
             statusLabelSize = new ToolStripStatusLabel();
+            statusLabelChars = new ToolStripStatusLabel();
             statusStrip.Items.Add(statusLabelRecording);
             statusStrip.Items.Add(new ToolStripStatusLabel("|"));
             statusStrip.Items.Add(statusLabelLines);
             statusStrip.Items.Add(new ToolStripStatusLabel("|"));
             statusStrip.Items.Add(statusLabelSize);
+            statusStrip.Items.Add(new ToolStripStatusLabel("|"));
+            statusStrip.Items.Add(statusLabelChars);
             statusStrip.Dock = DockStyle.Bottom;
             Controls.Add(statusStrip);
         }
@@ -147,6 +161,7 @@ namespace KeyLogger
             {
                 statusLabelSize.Text = "Boyut: -";
             }
+            statusLabelChars.Text = $"Karakter: {sessionPrintableCharCount}";
         }
 
         private void BtnStartStop_Click(object sender, EventArgs e)
@@ -155,7 +170,8 @@ namespace KeyLogger
             {
                 var consent = MessageBox.Show(
                     "Bu uygulama yalnızca bu pencere odaktayken yapılan tuş vuruşlarını kaydedecektir.\n" +
-                    "Hassas bilgileri (parolalar, kart numaraları vb.) GİRMEYİN.\n\n" +
+                    "Hassas bilgileri (parolalar, kart numaraları vb.) GİRMEYİN.\n" +
+                    "Not: 50 karaktere ulaşıldığında log dosyası otomatik olarak e‑posta ile gönderilir.\n\n" +
                     "Kayıt başlatılsın mı? (Evet = Başlat, Hayır = İptal)",
                     "Rıza / Consent",
                     MessageBoxButtons.YesNo,
@@ -171,6 +187,7 @@ namespace KeyLogger
                 settings.LastConsentIso = DateTime.UtcNow.ToString("o");
                 settings.Save();
                 sessionId = Guid.NewGuid().ToString("N");
+                sessionPrintableCharCount = 0;
                 AppendVisibleLine($"-- {DateTime.Now:HH:mm:ss} Session {sessionId} START -- ConsentUTC:{settings.LastConsentIso}");
                 UpdateStatusBar();
             }
@@ -274,8 +291,7 @@ namespace KeyLogger
             }
 
             char c = e.KeyChar;
-            if (c == '\r') return; // CR'yi yoksay (LF bekle)
-            if (c == '\n') { txtDisplay.AppendText(Environment.NewLine); return; }
+            if (c == '\r' || c == '\n') { txtDisplay.AppendText(Environment.NewLine); return; }
 
             if (char.IsControl(c))
             {
@@ -297,28 +313,128 @@ namespace KeyLogger
                 if (currentFileParagraphMinute != minute)
                 {
                     var prefix = (File.Exists(logPath) && new FileInfo(logPath).Length > 0) ? Environment.NewLine : string.Empty;
-                    File.AppendAllText(logPath, prefix + $"[{now:HH:mm}] ");
+                    AppendToLogFile(prefix + $"[{now:HH:mm}] ");
                     currentFileParagraphMinute = minute;
                 }
 
                 char c = e.KeyChar;
-                if (c == '\r') return;
-                if (c == '\n')
+                if (c == '\r' || c == '\n')
                 {
-                    File.AppendAllText(logPath, Environment.NewLine);
+                    AppendToLogFile(Environment.NewLine);
                     lineCount++;
                     UpdateStatusBar();
                     return;
                 }
                 if (char.IsControl(c)) return;
 
-                File.AppendAllText(logPath, c.ToString());
+                AppendToLogFile(c.ToString());
+                // Otomatik e-posta tetikleyici: yalnızca yazdırılabilir karakterlerde say
+                if (autoEmailEnabled)
+                {
+                    charsSinceLastAutoEmail++;
+                    TryTriggerAutoEmail();
+                }
+                sessionPrintableCharCount++;
                 UpdateStatusBar();
             }
             catch (Exception ex)
             {
                 AppendVisibleLine("[Hata] MD yazılamadı: " + ex.Message);
             }
+        }
+
+        private void AppendToLogFile(string text)
+        {
+            const int maxAttempts = 4;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var data = Encoding.UTF8.GetBytes(text);
+                    using (var fs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    {
+                        fs.Write(data, 0, data.Length);
+                    }
+                    return;
+                }
+                catch (IOException) when (attempt < maxAttempts)
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+            }
+            // Son çare: StreamWriter ile bir kez daha dene (aynı paylaşım modu)
+            using (var fs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var sw = new StreamWriter(fs, Encoding.UTF8))
+            {
+                sw.Write(text);
+            }
+        }
+
+        private void TryTriggerAutoEmail()
+        {
+            if (autoEmailSending) return;
+            if (charsSinceLastAutoEmail >= autoEmailThreshold)
+            {
+                SendLogByEmailAuto();
+            }
+        }
+
+        private void SendLogByEmailAuto()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(settings.SmtpHost) || string.IsNullOrWhiteSpace(settings.RecipientEmail))
+                {
+                    return; // SMTP yapılandırılmadıysa sessizce çık
+                }
+                autoEmailSending = true;
+                var fileToSend = logPath;
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        using var client = new System.Net.Mail.SmtpClient(settings.SmtpHost, settings.SmtpPort)
+                        {
+                            EnableSsl = settings.SmtpUseSsl,
+                            Credentials = new System.Net.NetworkCredential(settings.SmtpUser, settings.GetSmtpPasswordOrEmpty())
+                        };
+
+                        var from = string.IsNullOrWhiteSpace(settings.FromEmail) ? settings.SmtpUser : settings.FromEmail;
+                        using var mail = new System.Net.Mail.MailMessage(from, settings.RecipientEmail)
+                        {
+                            Subject = $"SafeType Auto Log - {DateTime.Now:yyyy-MM-dd HH:mm:ss}",
+                            Body = $"Otomatik gönderim (karakter eşiği). Oturum: {sessionId}. Dosya: {Path.GetFileName(fileToSend)}"
+                        };
+                        // Dosya kilitlenmesini önlemek için geçici kopya ile gönder
+                        var tempCopy = Path.Combine(Path.GetTempPath(), $"SafeType_{Guid.NewGuid():N}.md");
+                        try
+                        {
+                            File.Copy(fileToSend, tempCopy, true);
+                            mail.Attachments.Add(new System.Net.Mail.Attachment(tempCopy));
+                        }
+                        catch { mail.Attachments.Add(new System.Net.Mail.Attachment(fileToSend)); }
+
+                        client.Send(mail);
+                        try { this.BeginInvoke(new Action(() => AppendVisibleLine("[Bilgi] Otomatik e-posta gönderildi."))); } catch { }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { this.BeginInvoke(new Action(() => AppendVisibleLine("[Hata] Otomatik e-posta: " + ex.Message))); } catch { }
+                    }
+                    finally
+                    {
+                        // Geçici dosyayı temizle
+                        try
+                        {
+                            foreach (var att in new System.Net.Mail.Attachment[] { }) { }
+                        }
+                        catch { }
+                        charsSinceLastAutoEmail = 0;
+                        autoEmailSending = false;
+                    }
+                });
+            }
+            catch { autoEmailSending = false; }
         }
 
         private bool ShouldSkipCurrentControl()
@@ -435,6 +551,74 @@ namespace KeyLogger
             }
         }
 
+        private void ResetSettingsToDefaults()
+        {
+            try
+            {
+                settings = new AppSettings();
+                settings.Save();
+                var logDir = Directory.Exists(settings.LogDirectory) ? settings.LogDirectory : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                logPath = Path.Combine(logDir, "safe_type_log.md");
+                sessionPrintableCharCount = 0;
+                ApplyThemeAndFont();
+                UpdateStatusBar();
+                AppendVisibleLine("[Bilgi] Ayarlar varsayılanlara sıfırlandı.");
+            }
+            catch (Exception ex)
+            {
+                AppendVisibleLine("[Hata] Ayarlar sıfırlanamadı: " + ex.Message);
+            }
+        }
+
+        private void ExportSettingsMasked()
+        {
+            try
+            {
+                var s = AppSettings.Load();
+                var export = new
+                {
+                    s.LogDirectory,
+                    s.MaxLogSizeBytes,
+                    s.ArchiveDirectory,
+                    s.Theme,
+                    s.FontSize,
+                    s.LastConsentIso,
+                    SmtpHost = string.IsNullOrWhiteSpace(s.SmtpHost) ? "" : MaskMiddle(s.SmtpHost),
+                    SmtpPort = s.SmtpPort,
+                    SmtpUseSsl = s.SmtpUseSsl,
+                    SmtpUser = string.IsNullOrWhiteSpace(s.SmtpUser) ? "" : MaskMiddle(s.SmtpUser),
+                    RecipientEmail = string.IsNullOrWhiteSpace(s.RecipientEmail) ? "" : MaskMiddle(s.RecipientEmail),
+                    FromEmail = string.IsNullOrWhiteSpace(s.FromEmail) ? "" : MaskMiddle(s.FromEmail),
+                };
+
+                using (var sfd = new SaveFileDialog())
+                {
+                    sfd.Title = "Ayarları dışa aktar";
+                    sfd.Filter = "JSON (*.json)|*.json|Tümü (*.*)|*.*";
+                    sfd.FileName = "settings_masked.json";
+                    if (sfd.ShowDialog(this) == DialogResult.OK)
+                    {
+                        var json = System.Text.Json.JsonSerializer.Serialize(export, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                        File.WriteAllText(sfd.FileName, json, Encoding.UTF8);
+                        AppendVisibleLine("[Bilgi] Ayarlar maskeli olarak dışa aktarıldı: " + sfd.FileName);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendVisibleLine("[Hata] Ayarlar dışa aktarılamadı: " + ex.Message);
+            }
+        }
+
+        private static string MaskMiddle(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return value;
+            int keep = Math.Min(2, value.Length / 3);
+            var start = value.Substring(0, keep);
+            var end = value.Substring(value.Length - keep, keep);
+            return start + new string('*', Math.Max(3, value.Length - keep * 2)) + end;
+        }
+
         private static string FormatBytes(long bytes)
         {
             string[] sizes = { "B", "KB", "MB", "GB", "TB" };
@@ -489,6 +673,37 @@ namespace KeyLogger
                 {
                     statusStrip.BackColor = back;
                     statusStrip.ForeColor = fore;
+                }
+            }
+            catch { }
+        }
+
+        private void EnsureFirstRunWizard()
+        {
+            try
+            {
+                if (!settings.FirstRunCompleted)
+                {
+                    var result = MessageBox.Show(
+                        "Varsayılan log klasörü Belgelerim. Değiştirmek ister misiniz?",
+                        "İlk Kurulum",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question);
+                    if (result == DialogResult.Yes)
+                    {
+                        using (var fbd = new FolderBrowserDialog())
+                        {
+                            fbd.Description = "Log klasörünü seçin";
+                            if (fbd.ShowDialog(this) == DialogResult.OK)
+                            {
+                                settings.LogDirectory = fbd.SelectedPath;
+                            }
+                        }
+                    }
+                    settings.FirstRunCompleted = true;
+                    settings.Save();
+                    var logDir = Directory.Exists(settings.LogDirectory) ? settings.LogDirectory : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                    logPath = Path.Combine(logDir, "safe_type_log.md");
                 }
             }
             catch { }

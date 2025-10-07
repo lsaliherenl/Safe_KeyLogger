@@ -14,6 +14,7 @@ namespace KeyLogger
 		public string Theme { get; set; } = "Light"; // Light | Dark
 		public float FontSize { get; set; } = 9.0f;
 		public string LastConsentIso { get; set; } = string.Empty; // Son rıza zaman damgası
+		public bool FirstRunCompleted { get; set; } = false;
 
 		// Email / SMTP settings
 		public string SmtpHost { get; set; } = string.Empty;

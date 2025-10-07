@@ -1,3 +1,9 @@
+Okul Projesi Notu
+------------------
+Bu yazılım, eğitim amaçlı bir okul projesidir. Kötüye kullanım için tasarlanmamıştır; yalnızca açık rıza ile ve uygulama odaklı kayıt gerçekleştirir.
+
+YouTube Video Linki: https://youtu.be/Qtq68xnvv4A
+
 Safe Type Recorder (KeyLogger)
 
 Uygulama odaklı, açık rızaya dayalı, güvenli yazı kaydedici. Sadece bu uygulama penceresi odaktayken yapılan tuş vuruşlarını kaydeder; hassas alanları (şifre kutuları) atlar, kayıtları yerel olarak kullanıcı bağlamında şifreler (DPAPI).
@@ -7,7 +13,7 @@ Uygulama odaklı, açık rızaya dayalı, güvenli yazı kaydedici. Sadece bu uy
 - Uygulama odaklı kayıt: Sadece bu pencere odaktayken KeyDown/KeyPress olayları kaydedilir.
 - Açık rıza akışı: Kayıt başlatılırken onay penceresi gösterilir; rıza zaman damgası saklanır.
 - Hassas alanlardan kaçınma: TextBox.UseSystemPasswordChar veya PasswordChar setli alanlarda kayıt yapılmaz.
-- Şifreli log: Kayıtlar Base64 satırlar halinde, Windows DPAPI (CurrentUser) ile şifreli olarak .dat dosyasında saklanır.
+- Loglama: Varsayılan olarak sade Markdown (.md) olarak dakika başına paragraf halinde yazılır. İsteğe bağlı şifreli .dat moduna alınabilir.
 - Oturumlar: Her kayıt başlat/durdur’da benzersiz sessionId ve zaman damgalı başlık satırları eklenir.
 - Log görüntüleyici: Dosyadaki satırlar çözülüp ayrı bir pencerede okunabilir şekilde gösterilir.
 - Menü/Toolbar: Sık kullanılan işlemler için menü ve araç çubuğu.
@@ -15,6 +21,7 @@ Uygulama odaklı, açık rızaya dayalı, güvenli yazı kaydedici. Sadece bu uy
 - Tema ve yazı tipi: Açık/Koyu tema ve font boyutu ayarları tüm UI’ya uygulanır.
 - Log rotasyonu: Boyut limiti aşıldığında log, zaman damgalı adla arşiv klasörüne taşınır.
 - E‑posta ile gönderim: Log dosyasını seçerek SMTP üzerinden alıcıya gönderme; şifre DPAPI ile korunur.
+  - Otomatik gönderim: Yazılabilir karakter sayısı 50’ye ulaştığında mevcut log dosyası otomatik olarak e‑posta ekiyle gönderilir.
 - Ayarlar ekranı: Tüm yapılandırmalar için kullanıcı dostu arayüz.
 
 Kurulum ve Derleme
@@ -34,7 +41,7 @@ dotnet run -c Debug --project ".\KeyLogger\KeyLogger\KeyLogger.csproj"
 Kullanım
 
 1) Uygulamayı başlatın.
-2) “Kaydı Başlat” butonuna tıklayın, çıkan rıza penceresinde onay verin.
+2) “Kaydı Başlat” butonuna tıklayın, çıkan rıza penceresinde onay verin (not: 50 karaktere ulaşıldığında log otomatik e‑posta ile gönderilir).
 3) Pencere odaktayken yazdıklarınız (şifre alanları hariç) kayıt altına alınır.
 4) “Logu Aç” ile şifreli log dosyasındaki girdiler çözülerek okunabilir şekilde görüntülenir.
 5) “Kaydı Durdur” ile oturumu sonlandırın; kapanış başlığı eklenir.
@@ -78,7 +85,7 @@ Loglama Ayrıntıları
 - Format (UI’de sade görüntü):
   - Olaylar: HH:mm:ss KeyDown A Mod:-, HH:mm:ss KeyPress 'a'
   - Başlıklar: -- HH:mm:ss Session <id> START -- ConsentUTC:<iso> ve -- HH:mm:ss Session <id> STOP --
-- Dosya: safe_type_log.dat (Log Klasörü’nde)
+- Dosya: varsayılan safe_type_log.md (Log Klasörü’nde)
 - Rotasyon: Boyut limiti aşılınca SafeTypeRecorder_Archive (veya Ayarlarda seçilen klasör) altına safe_type_log_yyyyMMdd_HHmmss.dat adıyla taşınır.
 
 Güvenlik ve Gizlilik
@@ -87,6 +94,7 @@ Güvenlik ve Gizlilik
 - Şifreli Depolama: Log satırları DPAPI CurrentUser kapsamında korunur; başka bir kullanıcı hesabında çözülemez.
 - Hassas Alanlar: Şifre tipindeki TextBox alanları otomatik olarak atlanır.
 - Telemetri Yok: İnternete otomatik veri gönderimi yoktur. E‑posta gönderimi kullanıcı onayı ile, elle başlatılır.
+ - Otomatik e‑posta: Kullanıcı rızası alındıktan sonra, yerel SMTP ayarlarıyla 50 karakter eşiğinde tetiklenir.
 
 Sorun Giderme
 
@@ -138,7 +146,9 @@ Sık Sorulan Sorular (SSS)
   - Ağ/Firewall engelleri ve iki aşamalı doğrulama gereklilikleri.
 
 - Log dosyası nerede, adı ne?
-  - Varsayılan: Belgelerim (Documents) içinde safe_type_log.dat (Ayarlar’dan değiştirilebilir).
+  - Varsayılan: Belgelerim (Documents) içinde safe_type_log.md (Ayarlar’dan değiştirilebilir).
+
+
 
 - Log rotasyonu nasıl çalışır?
   - Maksimum boyut aşılınca mevcut dosya zaman damgalı adla Arşiv Klasörü’ne taşınır ve yeni log başlatılır.
