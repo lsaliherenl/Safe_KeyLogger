@@ -4,7 +4,7 @@ Bu yazılım, eğitim amaçlı bir okul projesidir. Kötüye kullanım için tas
 
 YouTube Video Linki: https://youtu.be/Qtq68xnvv4A
 
-Safe Type Recorder (KeyLogger)
+Safe Type Recorder
 
 Uygulama odaklı, açık rızaya dayalı, güvenli yazı kaydedici. Sadece bu uygulama penceresi odaktayken yapılan tuş vuruşlarını kaydeder; hassas alanları (şifre kutuları) atlar, kayıtları yerel olarak kullanıcı bağlamında şifreler (DPAPI).
 
